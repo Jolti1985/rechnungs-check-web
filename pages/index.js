@@ -1,5 +1,71 @@
 import { useState } from "react";
 
+function TrafficLight({ data }) {
+  if (!data || !data.status) return null;
+
+  const colors = {
+    green: "#2ecc71",
+    yellow: "#f1c40f",
+    red: "#e74c3c",
+  };
+
+  const bg = {
+    green: "#eafff2",
+    yellow: "#fff8dd",
+    red: "#ffe8e8",
+  };
+
+  return (
+    <div
+      style={{
+        marginTop: 16,
+        padding: 14,
+        borderRadius: 10,
+        border: "1px solid #e5e5e5",
+        background: bg[data.status] || "#fafafa",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div
+          style={{
+            width: 14,
+            height: 14,
+            borderRadius: "50%",
+            background: colors[data.status] || "#aaa",
+          }}
+        />
+        <div style={{ fontWeight: 800 }}>
+          Ampel: {String(data.status).toUpperCase()}
+        </div>
+      </div>
+
+      <ul style={{ marginTop: 10, marginBottom: 0 }}>
+        {(data.reasons || []).map((r, i) => (
+          <li key={i} style={{ color: "#333" }}>
+            {r}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function Card({ label, value }) {
+  return (
+    <div
+      style={{
+        padding: 12,
+        border: "1px solid #eee",
+        borderRadius: 10,
+        background: "#fff",
+      }}
+    >
+      <div style={{ fontSize: 12, color: "#666" }}>{label}</div>
+      <div style={{ fontSize: 16, fontWeight: 800 }}>{value || "—"}</div>
+    </div>
+  );
+}
+
 export default function Home() {
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -27,6 +93,7 @@ export default function Home() {
 
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Analyse fehlgeschlagen.");
+
       setResult(data);
     } catch (e) {
       setError(e?.message || "Unbekannter Fehler.");
@@ -36,10 +103,17 @@ export default function Home() {
   }
 
   return (
-    <main style={{ fontFamily: "Arial, sans-serif", padding: 40, maxWidth: 980 }}>
+    <main
+      style={{
+        fontFamily:
+          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif',
+        padding: 40,
+        maxWidth: 980,
+      }}
+    >
       <h1 style={{ marginBottom: 6 }}>Rechnungs-Check Web Demo</h1>
       <p style={{ marginTop: 0, color: "#555" }}>
-        PDF oder Screenshot hochladen → Rechnung/Mahnung erkennen → Positionen anzeigen → DE→EN (Demo) → Ampel.
+        Upload → Analyse → Ergebnis + Positionen (Demo) + Ampel (Demo)
       </p>
 
       <div
@@ -57,6 +131,7 @@ export default function Home() {
             accept="application/pdf,image/*"
             onChange={(e) => setFile(e.target.files?.[0] || null)}
           />
+
           <button
             onClick={analyze}
             disabled={loading}
@@ -67,7 +142,7 @@ export default function Home() {
               borderRadius: 8,
               border: "1px solid #bbb",
               background: loading ? "#eee" : "#fff",
-              fontWeight: 600,
+              fontWeight: 700,
             }}
           >
             {loading ? "Analysiere…" : "Analyse starten"}
@@ -81,34 +156,37 @@ export default function Home() {
         </div>
 
         {error && (
-          <div style={{ marginTop: 12, color: "crimson", fontWeight: 600 }}>
+          <div style={{ marginTop: 12, color: "crimson", fontWeight: 700 }}>
             {error}
           </div>
         )}
       </div>
 
       {result && (
-        <div style={{ marginTop: 20 }}>
+        <section style={{ marginTop: 22 }}>
           <h2 style={{ marginBottom: 10 }}>Ergebnis</h2>
 
-          {/* Ampel */}
-          {result?.traffic_light && (
-            <TrafficLightBox traffic={result.traffic_light} />
-          )}
+          {/* ✅ Ampel sichtbar sobald API traffic_light liefert */}
+          <TrafficLight data={result.traffic_light} />
 
-          {/* Basisinfos */}
-          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <Field label="Anbieter" value={result.provider} />
-            <Field label="Dokumenttyp" value={result.document_type} />
-            <Field label="Rechnungsmonat" value={result.invoice_month} />
-            <Field label="Rechnungsnummer" value={result.invoice_number} />
-            <Field label="Zu zahlen" value={result.total_amount} />
-            <Field label="Zahlungsziel / Datum" value={result.payment_due} />
-            <Field label="Kündbar ab" value={result.cancelable_from} />
-            <Field label="Übersetzung" value={result.translation_mode} />
+          <div
+            style={{
+              marginTop: 12,
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 12,
+            }}
+          >
+            <Card label="Anbieter" value={result.provider} />
+            <Card label="Dokumenttyp" value={result.document_type} />
+            <Card label="Rechnungsmonat" value={result.invoice_month} />
+            <Card label="Rechnungsnummer" value={result.invoice_number} />
+            <Card label="Zu zahlen" value={result.total_amount} />
+            <Card label="Zahlungsziel / Datum" value={result.payment_due} />
+            <Card label="Kündbar ab" value={result.cancelable_from} />
+            <Card label="Übersetzung" value={result.translation_mode} />
           </div>
 
-          {/* Positionen */}
           <h3 style={{ marginTop: 18 }}>Positionen (DE → EN)</h3>
           <div style={{ border: "1px solid #eee", borderRadius: 10, overflow: "hidden" }}>
             {Array.isArray(result.items) && result.items.length > 0 ? (
@@ -123,15 +201,11 @@ export default function Home() {
                 >
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 10 }}>
                     <div>
-                      <div style={{ marginBottom: 6 }}>
-                        <div style={{ fontSize: 12, color: "#777" }}>DE</div>
-                        <div style={{ fontWeight: 600 }}>{it.de || "—"}</div>
-                      </div>
+                      <div style={{ fontSize: 12, color: "#777" }}>DE</div>
+                      <div style={{ fontWeight: 800 }}>{it.de || "—"}</div>
 
-                      <div style={{ marginBottom: 6 }}>
-                        <div style={{ fontSize: 12, color: "#777" }}>EN</div>
-                        <div style={{ fontWeight: 600 }}>{it.en || "—"}</div>
-                      </div>
+                      <div style={{ marginTop: 8, fontSize: 12, color: "#777" }}>EN</div>
+                      <div style={{ fontWeight: 800 }}>{it.en || "—"}</div>
 
                       {it.explain && (
                         <div style={{ marginTop: 8, color: "#444", fontSize: 13 }}>
@@ -142,7 +216,7 @@ export default function Home() {
 
                     <div style={{ textAlign: "right" }}>
                       <div style={{ fontSize: 12, color: "#777" }}>Betrag</div>
-                      <div style={{ fontWeight: 700, fontSize: 16 }}>
+                      <div style={{ fontWeight: 900, fontSize: 16 }}>
                         {it.amount || "—"}
                       </div>
                     </div>
@@ -154,67 +228,23 @@ export default function Home() {
             )}
           </div>
 
-          {/* Zahlungsdetails */}
           <h3 style={{ marginTop: 18 }}>Zahlungsdetails</h3>
-          <pre style={{ background: "#f4f4f4", padding: 16, borderRadius: 10, overflow: "auto" }}>
+          <pre
+            style={{
+              background: "#f4f4f4",
+              padding: 16,
+              borderRadius: 10,
+              overflow: "auto",
+            }}
+          >
 {JSON.stringify(result.payment || {}, null, 2)}
           </pre>
-        </div>
+        </section>
       )}
 
       <footer style={{ marginTop: 30, color: "#777", fontSize: 12 }}>
-        Demo-Stand: PDF wird lokal im Vercel-Backend ausgelesen (Regex/Parser). Echte Übersetzung & Erklärungen kommen als nächstes per OpenAI.
+        Demo: Ampel/Positionen sind Demo-Logik. Als nächstes: echte PDF-Auslese + OpenAI Übersetzung/Erklärung.
       </footer>
     </main>
-  );
-}
-
-function Field({ label, value }) {
-  return (
-    <div style={{ padding: 12, border: "1px solid #eee", borderRadius: 10, background: "#fff" }}>
-      <div style={{ fontSize: 12, color: "#666" }}>{label}</div>
-      <div style={{ fontSize: 16, fontWeight: 700 }}>{value || "—"}</div>
-    </div>
-  );
-}
-
-function TrafficLightBox({ traffic }) {
-  const status = (traffic?.status || "yellow").toLowerCase();
-  const reasons = Array.isArray(traffic?.reasons) ? traffic.reasons : [];
-
-  const bg =
-    status === "red" ? "#ffe5e5" : status === "green" ? "#e6ffef" : "#fff7cc";
-
-  const label =
-    status === "red" ? "ROT" : status === "green" ? "GRÜN" : "GELB";
-
-  return (
-    <div
-      style={{
-        padding: 14,
-        borderRadius: 10,
-        border: "1px solid #eee",
-        background: bg,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <b>Ampel:</b>
-        <span
-          style={{
-            padding: "5px 12px",
-            borderRadius: 999,
-            border: "1px solid #ddd",
-            fontWeight: 800,
-            background: "#fff",
-          }}
-        >
-          {label}
-        </span>
-      </div>
-
-      <ul style={{ marginTop: 10, marginBottom: 0 }}>
-        {reasons.length ? reasons.map((r, i) => <li key={i}>{r}</li>) : <li>Keine Gründe ausgegeben.</li>}
-      </ul>
-    </div>
   );
 }
