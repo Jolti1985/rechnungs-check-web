@@ -67,6 +67,29 @@ export default function Home() {
       {result && (
         <div style={{ marginTop: 20 }}>
           <h2>Ergebnis (Demo)</h2>
+        {result.traffic_light && (
+  <div style={{
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 8,
+    border: "1px solid #eee"
+  }}>
+    <b>Ampel:</b>{" "}
+    <span style={{
+      padding: "4px 10px",
+      borderRadius: 999,
+      border: "1px solid #ddd",
+      display: "inline-block",
+      marginLeft: 8
+    }}>
+      {result.traffic_light.status.toUpperCase()}
+    </span>
+    <ul style={{ marginTop: 8 }}>
+      {result.traffic_light.reasons?.map((r, i) => <li key={i}>{r}</li>)}
+    </ul>
+  </div>
+)}
+
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <Field label="Anbieter" value={result.provider} />
             <Field label="Dokumenttyp" value={result.document_type} />
