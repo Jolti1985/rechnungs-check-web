@@ -1,260 +1,104 @@
-import Busboy from "busboy";
-import pdfParse from "pdf-parse";
-
 export const config = {
   api: { bodyParser: false },
 };
 
-function parseMultipart(req) {
-  return new Promise((resolve, reject) => {
-    const bb = Busboy({ headers: req.headers });
-    let fileBuffer = Buffer.alloc(0);
-    let fileName = "upload";
-    let mimeType = "application/octet-stream";
+async function readFileName(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  const body = Buffer.concat(chunks).toString("binary");
 
-    bb.on("file", (_name, file, info) => {
-      fileName = info.filename || "upload";
-      mimeType = info.mimeType || info.mimetype || mimeType;
-
-      file.on("data", (data) => {
-        fileBuffer = Buffer.concat([fileBuffer, data]);
-      });
-      file.on("error", reject);
-    });
-
-    bb.on("finish", () => resolve({ fileBuffer, fileName, mimeType }));
-    bb.on("error", reject);
-
-    req.pipe(bb);
-  });
+  // rudimentär: filename="..."
+  const m = body.match(/filename="([^"]+)"/);
+  return m ? m[1] : "upload";
 }
 
-function detectProvider(text) {
-  const t = text.toLowerCase();
-  if (t.includes("telekom deutschland") || t.includes("erleben, was verbindet") || t.includes("magenta")) return "Telekom";
-  if (t.includes("vodafone")) return "Vodafone";
-  if (t.includes("telefonica") || t.includes("o2")) return "o2";
-  if (t.includes("congstar")) return "congstar";
-  return "Unbekannt";
-}
+function buildTrafficLight({ documentType, totalAmount, paymentDue }) {
+  // Demo-Logik (später wird das aus PDF-Inhalt + OpenAI abgeleitet)
+  // Regeln:
+  // - Mahnung => rot
+  // - Zahlungsziel vorhanden und Betrag > 0 => gelb
+  // - sonst grün
 
-function firstMatch(text, regex) {
-  const m = text.match(regex);
-  return m ? m[1].trim() : "";
-}
-
-function normalizeEuro(s) {
-  if (!s) return "";
-  return s.replace(/\s/g, "").replace(".", "").replace(",", "."); // "170,37" -> "170.37"
-}
-
-function euroToNumber(euroStr) {
-  const n = parseFloat(normalizeEuro(euroStr));
-  return Number.isFinite(n) ? n : null;
-}
-
-/**
- * Sehr einfache Telekom-Positions-Erkennung:
- * Wir suchen Zeilen, die am Ende einen Betrag haben, z.B. "MagentaZuhause ... 29,36"
- */
-function extractItemsFromText(text) {
-  const lines = text
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-
-  const items = [];
-  const amountRegex = /(\d{1,3}(?:\.\d{3})*,\d{2})\s*€?$/; // 29,36 / 1.234,56
-
-  // Nur sinnvolle Zeilen: nicht zu kurz, nicht nur Zahlen
-  for (const line of lines) {
-    const m = line.match(amountRegex);
-    if (!m) continue;
-
-    const amount = m[1];
-    const desc = line.replace(amountRegex, "").trim();
-
-    if (desc.length < 6) continue;
-    if (/^ust\.?/i.test(desc)) continue;
-    if (/summe|gesamt|zu zahlen|nettobetrag|bruttobetrag/i.test(desc)) continue;
-
-    items.push({ de: desc, amount: `${amount} €` });
-  }
-
-  // Duplikate raus
-  const uniq = [];
-  const seen = new Set();
-  for (const it of items) {
-    const key = `${it.de}__${it.amount}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    uniq.push(it);
-  }
-
-  // Nicht “zu viel” ausgeben (Demo)
-  return uniq.slice(0, 12);
-}
-
-const DICT = [
-  ["Monatliche Grundgebühr", "Monthly base fee"],
-  ["Monatliche Zusatzleistung", "Monthly add-on"],
-  ["Einmalige Leistung", "One-time service"],
-  ["Technische Leistung", "Technical service"],
-  ["Fehlerbehebung", "Troubleshooting"],
-  ["Heimnetz", "Home network"],
-  ["Endgeräte", "Devices"],
-  ["Servicepaket", "Service package"],
-  ["Speedport", "Speedport"],
-  ["MagentaZuhause", "MagentaZuhause"],
-];
-
-function translateDEtoEN(de) {
-  let en = de;
-
-  for (const [a, b] of DICT) {
-    en = en.replaceAll(a, b);
-  }
-
-  // kleine Heuristiken
-  en = en.replaceAll("für", "for");
-  en = en.replaceAll("und", "and");
-
-  // wenn sich nichts geändert hat → markiere als “unklar”
-  if (en === de) en = `${de} (EN translation pending)`;
-
-  return en;
-}
-
-function trafficLight({ total, oneTimeTotal, cancelableFrom, isReminder }) {
   const reasons = [];
-  let status = "green";
 
-  if (isReminder) {
-    status = "red";
-    reasons.push("Mahn-/Reminder-Dokument erkannt → Zahlung kritisch.");
+  if ((documentType || "").toLowerCase().includes("mahnung")) {
+    reasons.push("Dokument als Mahnung erkannt (Demo-Regel).");
+    reasons.push("Offener Betrag sollte zeitnah beglichen werden.");
+    return { status: "red", reasons };
   }
 
-  if (oneTimeTotal != null && oneTimeTotal >= 50) {
-    status = status === "red" ? "red" : "yellow";
-    reasons.push("Hohe Einmalbeträge erkannt.");
+  // Betrag-Check (sehr einfach)
+  const amountNum = typeof totalAmount === "string"
+    ? parseFloat(totalAmount.replace(".", "").replace(",", ".").replace("€", "").trim()) || 0
+    : 0;
+
+  if (amountNum > 0) {
+    reasons.push("Rechnung enthält einen zu zahlenden Betrag.");
+    if (paymentDue) reasons.push(`Zahlungsziel erkannt: ${paymentDue}`);
+    else reasons.push("Kein Zahlungsziel erkannt (Demo).");
+    return { status: "yellow", reasons };
   }
 
-  if (total != null && total >= 150) {
-    status = status === "red" ? "red" : "yellow";
-    reasons.push("Hoher Rechnungsbetrag (Demo-Regel).");
-  }
-
-  if (cancelableFrom) {
-    status = status === "red" ? "red" : "yellow";
-    reasons.push("Vertrag könnte kündbar sein (Datum erkannt).");
-  }
-
-  if (reasons.length === 0) reasons.push("Keine Auffälligkeiten nach Demo-Regeln.");
-  return { status, reasons };
+  reasons.push("Kein offener Betrag erkannt (Demo).");
+  return { status: "green", reasons };
 }
 
 export default async function handler(req, res) {
-  try {
-    if (req.method !== "POST") return res.status(405).json({ error: "Use POST" });
+  if (req.method !== "POST") return res.status(405).json({ error: "Use POST" });
 
-    const { fileBuffer, fileName, mimeType } = await parseMultipart(req);
+  const filename = await readFileName(req);
+  const lower = filename.toLowerCase();
 
-    // Bild/Screenshot: noch Demo (später OCR/OpenAI Vision)
-    if (mimeType.startsWith("image/")) {
-      const demo = {
-        provider: "Unbekannt",
-        document_type: "Screenshot (Demo – OCR folgt)",
-        invoice_month: "",
-        invoice_number: "",
-        total_amount: "",
-        payment_due: "",
-        cancelable_from: "",
-        translation_mode: "DE → EN (Demo)",
-        items: [
-          { de: "Screenshot erkannt – OCR folgt", en: "Screenshot detected – OCR coming next", amount: "" }
-        ],
-        traffic_light: { status: "yellow", reasons: ["Screenshot ohne OCR – bitte PDF testen (Demo)."] },
-        payment: { note: "Für Screenshots bauen wir OCR als nächsten Schritt ein." }
-      };
-      return res.status(200).json(demo);
-    }
+  // Demo: Provider-Erkennung am Dateinamen (später am Inhalt)
+  const provider =
+    lower.includes("telekom") || lower.includes("rechnung") ? "Telekom" :
+    lower.includes("vodafone") ? "Vodafone" :
+    lower.includes("o2") ? "o2" :
+    lower.includes("congstar") ? "congstar" :
+    "Unbekannt";
 
-    // PDF-Text extrahieren
-    let text = "";
-    if (mimeType === "application/pdf" || fileName.toLowerCase().endsWith(".pdf")) {
-      const parsed = await pdfParse(fileBuffer);
-      text = parsed.text || "";
-    } else {
-      // andere Formate: Demo
-      text = "";
-    }
+  // Demo: dokumenttyp am dateinamen erkennen
+  const document_type = lower.includes("mahnung") ? "Mahnung (Demo)" : "Rechnung (Demo)";
 
-    const provider = detectProvider(text || fileName);
+  // Demo: feste Beispielwerte (wie bei deiner Telekom-Rechnung)
+  const invoice_month = "Oktober 2020";
+  const invoice_number = "75 6354 4858";
+  const total_amount = "170,37 €";
+  const payment_due = "14.10.2020 (Demo)";
+  const cancelable_from = "19.07.2021 (Demo)";
 
-    // Rechnung/Mahnung grob erkennen
-    const isReminder = /mahnung|zahlungserinnerung|offener betrag/i.test(text);
+  const items = [
+    { de: "MagentaZuhause M Hybrid", en: "MagentaZuhause M Hybrid (plan)", amount: "29,36 €", explain: "Monatliche Grundgebühr (Demo)" },
+    { de: "Speedport Pro Endgeräte-Servicepaket", en: "Speedport Pro device service package", amount: "8,36 €", explain: "Monatliche Zusatzleistung (Demo)" },
+    { de: "Fehlerbehebung Heimnetz", en: "Home network troubleshooting", amount: "67,18 €", explain: "Einmalige Leistung (Demo)" },
+    { de: "Technische Leistung M", en: "Technical service M", amount: "41,97 €", explain: "Einmalige Leistung (Demo)" },
+  ];
 
-    // Telekom typische Felder (sehr grob)
-    const invoiceNumber =
-      firstMatch(text, /Rechnungsnummer\s*([\d\s]+)/i) ||
-      firstMatch(text, /Rechnung\s*Nr\.?\s*([\d\s]+)/i);
+  const payment = {
+    reference: "Mandatsreferenz / Rechnungsnr. (Demo)",
+    iban: "DE00 0000 0000 0000 0000 00 (Demo)",
+    bic: "XXXXDEXX (Demo)",
+    purpose: "Rechnungsnummer 75 6354 4858",
+    note: "Bankdaten werden später aus PDF-Inhalt extrahiert (OpenAI + Parser)."
+  };
 
-    const date =
-      firstMatch(text, /Datum\s*(\d{2}\.\d{2}\.\d{4})/i);
+  const traffic_light = buildTrafficLight({
+    documentType: document_type,
+    totalAmount: total_amount,
+    paymentDue: payment_due,
+  });
 
-    const total =
-      firstMatch(text, /Zu zahlender Betrag\s*([\d\.,]+)\s*€?/i) ||
-      firstMatch(text, /zu zahlen[:\s]*([\d\.,]+)\s*€?/i);
-
-    const cancelableFrom =
-      firstMatch(text, /Kündigung.*spätestens am:\s*(\d{2}\.\d{2}\.\d{2,4})/i) ||
-      firstMatch(text, /Kündigung.*am\s*(\d{2}\.\d{2}\.\d{2,4})/i);
-
-    const itemsRaw = extractItemsFromText(text);
-    const items = itemsRaw.map((it) => ({
-      de: it.de,
-      en: translateDEtoEN(it.de),
-      amount: it.amount,
-      explain: it.de.length ? "Position aus PDF-Text erkannt (Demo-Regel)." : ""
-    }));
-
-    // Einmalbeträge grob schätzen: Wir nehmen Positionen, die nach “einmal” klingen
-    let oneTimeTotal = 0;
-    for (const it of items) {
-      if (/fehlerbehebung|technische|einmal/i.test(it.de)) {
-        const num = euroToNumber(it.amount);
-        if (num != null) oneTimeTotal += num;
-      }
-    }
-    if (oneTimeTotal === 0) oneTimeTotal = null;
-
-    const totalNum = total ? euroToNumber(total) : null;
-
-    const amp = trafficLight({
-      total: totalNum,
-      oneTimeTotal,
-      cancelableFrom,
-      isReminder
-    });
-
-    return res.status(200).json({
-      provider,
-      document_type: isReminder ? "Mahnung/Zahlungserinnerung (Demo)" : "Rechnung (PDF erkannt)",
-      invoice_month: "", // kommt als nächstes (Monat aus Text)
-      invoice_number: invoiceNumber || "",
-      total_amount: total ? `${total} €` : "",
-      payment_due: date ? `${date} (Datum erkannt)` : "",
-      cancelable_from: cancelableFrom || "",
-      translation_mode: "DE → EN (regelbasiert Demo)",
-      traffic_light: amp,
-      items: items.length ? items : [{ de: "Keine Positionen gefunden", en: "No line items found", amount: "" }],
-      payment: {
-        purpose: invoiceNumber ? `Rechnungsnummer ${invoiceNumber}` : "",
-        note: "Bankdaten/IBAN kommen als nächstes aus dem PDF-Text (Demo-Ausbau).",
-        file: fileName
-      }
-    });
-  } catch (e) {
-    return res.status(500).json({ error: e?.message || "Server error" });
-  }
+  return res.status(200).json({
+    provider,
+    document_type,
+    invoice_month,
+    invoice_number,
+    total_amount,
+    payment_due,
+    cancelable_from,
+    translation_mode: "DE → EN (Demo)",
+    traffic_light, // ✅ HIER IST DIE AMPEL
+    items,
+    payment
+  });
 }
